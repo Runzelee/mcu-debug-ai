@@ -219,13 +219,13 @@ export interface RTTConfiguration {
 
 export interface ElfSection {
     name: string;
-    address: bigint; // New base address
-    addressOrig: bigint; // original base address in Elf file
+    address: number | string; // base address: number or launch.json string, or an internal hex string
+    addressOrig?: string; // original ELF VMA as an internal hex string
 }
 export interface SymbolFile {
     file: string;
-    offset?: bigint;
-    textaddress?: bigint;
+    offset?: number | string;
+    textaddress?: number | string;
     sections: ElfSection[];
     sectionMap: { [name: string]: ElfSection };
 }

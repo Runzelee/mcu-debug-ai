@@ -26,12 +26,14 @@ dist/
 build/
 target/
 *.vsix
+mcu-debug-helper
 
 # Monorepo workspace outputs
 packages/*/out/
 packages/*/dist/
 packages/*/target/
 packages/*/node_modules/
+packages/shared/lib/
 
 # Rust build artifacts
 packages/mcu-debug-helper/target/
@@ -89,3 +91,7 @@ $RECYCLE.BIN/
 
 # Resources copied by scripts
 packages/mcu-debug/resources/codicons/
+
+# AI Coding Configurations
+.codex
+.claude/
