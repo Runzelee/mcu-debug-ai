@@ -74,6 +74,20 @@ function generateConfiguration() {
             default: 60,
             description: "Maximum allowed recording duration (in seconds) for AI agents in manual mode. Should be >= mcpRecordingMaxDuration to account for human reaction time.",
         },
+        "mcu-ai-debug.mcpPreferredPort": {
+            type: "number",
+            default: 51234,
+            minimum: 1,
+            maximum: 65535,
+            description: "Preferred localhost port for the MCU-Debug MCP server. If unavailable, the extension searches the following port range.",
+        },
+        "mcu-ai-debug.mcpPortSearchRange": {
+            type: "number",
+            default: 100,
+            minimum: 1,
+            maximum: 1000,
+            description: "Number of consecutive ports to try for the MCU-Debug MCP server, starting at mcpPreferredPort.",
+        },
     };
 
     return [
