@@ -10,15 +10,18 @@ import { LiveWatchTreeProvider } from "./views/live-watch";
  * Uses StdioServerTransport over the socket's read/write streams.
  */
 export class LiveWatchMcpServer {
-    private server: net.Server;
-    private readonly port = 51234;
-    private mcpServer: Server | null = null;
+    private server: net.Server | null = null;
+    private port: number | null = null;
+    private startPromise: Promise<number> | null = null;
+    private readonly mcpServers = new Set<Server>();
     private liveWatchProvider: LiveWatchTreeProvider;
 
     constructor(liveWatchProvider: LiveWatchTreeProvider) {
         this.liveWatchProvider = liveWatchProvider;
+    }
 
-        this.mcpServer = new Server({
+    private createMcpServer(): Server {
+        const mcpServer = new Server({
             name: "mcu-debug",
             version: "0.1.1"
         }, {
@@ -27,14 +30,20 @@ export class LiveWatchMcpServer {
             }
         });
 
-        this.setupTools();
+        this.setupTools(mcpServer);
+        return mcpServer;
+    }
 
-        this.server = net.createServer((socket) => {
-            console.log("MCP Client connected to MCU-Debug on TCP port", this.port);
+    private createTcpServer(): net.Server {
+        return net.createServer((socket) => {
+            const port = this.port ?? "unknown";
+            console.log("MCP Client connected to MCU-Debug on TCP port", port);
 
+            const mcpServer = this.createMcpServer();
+            this.mcpServers.add(mcpServer);
             const transport = new StdioServerTransport(socket, socket);
             
-            this.mcpServer!.connect(transport).catch(e => {
+            mcpServer.connect(transport).catch(e => {
                 console.error("MCP Server connection error:", e);
                 socket.destroy();
             });
@@ -46,6 +55,8 @@ export class LiveWatchMcpServer {
             socket.on("close", () => {
                 console.log("MCP Client disconnected from MCU-Debug");
                 transport.close();
+                mcpServer.close();
+                this.mcpServers.delete(mcpServer);
             });
         });
     }
@@ -60,10 +71,8 @@ export class LiveWatchMcpServer {
     /**
      * Register all MCP tools for external AI agent consumption.
      */
-    private setupTools() {
-        if (!this.mcpServer) return;
-
-        this.mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
+    private setupTools(mcpServer: Server) {
+        mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
             return {
                 tools: [
                     {
@@ -107,7 +116,7 @@ export class LiveWatchMcpServer {
             };
         });
 
-        this.mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+        mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
             switch (request.params.name) {
                 case "get_livewatch_variables": {
                     if (!this.isDebugActive()) {
@@ -173,7 +182,7 @@ export class LiveWatchMcpServer {
                     }
                     // If the user has enabled manual recording mode, reject automatic recording
                     // and instruct the agent to use the manual recording tool instead.
-                    const configAuto = vscode.workspace.getConfiguration("mcu-debug", null);
+                    const configAuto = vscode.workspace.getConfiguration("mcu-ai-debug", null);
                     if (configAuto.get<boolean>("mcpRequireManualRecording", false)) {
                         return { content: [{ type: "text", text: JSON.stringify({
                             status: "MANUAL_MODE_REQUIRED",
@@ -232,7 +241,7 @@ export class LiveWatchMcpServer {
                         return { content: [{ type: "text", text: JSON.stringify({ status: "NO_VARIABLES" }, null, 2) }] };
                     }
 
-                    const configManual = vscode.workspace.getConfiguration("mcu-debug", null);
+                    const configManual = vscode.workspace.getConfiguration("mcu-ai-debug", null);
                     const maxManualMs = configManual.get<number>("mcpManualRecordingMaxDuration", 60) * 1000;
 
                     // Phase 1: prompt the user to confirm the start of recording
@@ -292,17 +301,62 @@ export class LiveWatchMcpServer {
         });
     }
 
-    public start() {
-        this.server.listen(this.port, "127.0.0.1", () => {
-            console.log(`MCU-AI-Debug MCP Server listening on 127.0.0.1:${this.port}`);
-        });
+    public getPort(): number | null {
+        return this.port;
+    }
 
-        this.server.on("error", (e: NodeJS.ErrnoException) => {
-            if (e.code === "EADDRINUSE") {
-                console.warn(`Port ${this.port} is already in use. Assuming MCP Server is handled by another window.`);
-            } else {
+    public start(preferredPort = 51234, searchRange = 100): Promise<number> {
+        if (this.startPromise) {
+            return this.startPromise;
+        }
+
+        const normalizedPreferredPort = Math.max(1, Math.min(65535, Math.floor(preferredPort)));
+        const normalizedSearchRange = Math.max(1, Math.floor(searchRange));
+        const lastPort = Math.min(65535, normalizedPreferredPort + normalizedSearchRange - 1);
+
+        this.startPromise = this.listenOnAvailablePort(normalizedPreferredPort, lastPort).catch((err) => {
+            this.startPromise = null;
+            throw err;
+        });
+        return this.startPromise;
+    }
+
+    private listenOnAvailablePort(port: number, lastPort: number): Promise<number> {
+        return new Promise((resolve, reject) => {
+            const server = this.createTcpServer();
+            this.server = server;
+
+            const cleanup = () => {
+                server.off("error", onError);
+                server.off("listening", onListening);
+            };
+
+            const onListening = () => {
+                cleanup();
+                this.port = port;
+                console.log(`MCU-AI-Debug MCP Server listening on 127.0.0.1:${port}`);
+                resolve(port);
+            };
+
+            const onError = (e: NodeJS.ErrnoException) => {
+                cleanup();
+                try {
+                    server.close();
+                } catch (_closeErr) {
+                    // The server may not have reached the listening state.
+                }
+                if (e.code === "EADDRINUSE" && port < lastPort) {
+                    console.warn(`MCP port ${port} is already in use. Trying ${port + 1}.`);
+                    this.listenOnAvailablePort(port + 1, lastPort).then(resolve, reject);
+                    return;
+                }
                 console.error("MCP Server Error:", e);
-            }
+                reject(e);
+            };
+
+            server.once("error", onError);
+            server.once("listening", onListening);
+            server.listen(port, "127.0.0.1");
         });
     }
 
@@ -310,8 +364,9 @@ export class LiveWatchMcpServer {
         if (this.server) {
             this.server.close();
         }
-        if (this.mcpServer) {
-            this.mcpServer.close();
+        for (const mcpServer of this.mcpServers) {
+            mcpServer.close();
         }
+        this.mcpServers.clear();
     }
 }

@@ -20,8 +20,8 @@ The extension hosts an embedded MCP server that exposes debugger state to extern
 
 ### Architecture
 
-- A TCP server listens on `127.0.0.1:51234` using VS Code's internal Node.js runtime (`ELECTRON_RUN_AS_NODE=1`).
-- A bridge script (`support/mcp-bridge.js`) connects external MCP clients to this TCP server.
+- A TCP server listens on `127.0.0.1`, preferring port `51234` and automatically moving to the next available port if another VS Code window already owns it.
+- A bridge script (`support/mcp-bridge.js`) connects external MCP clients to this TCP server. Generated MCP configs read `.vscode/mcu-debug-mcp-port.json`, so multiple VS Code workspaces can each use their own MCP port.
 - The `mcu-debug: Generate MCP Configuration` command auto-generates ready-to-use JSON configs and a comprehensive API reference document (`mcu-debug-mcp.md`).
 
 ### MCP Tools
@@ -111,6 +111,8 @@ The Live Watch system includes a hardware-accelerated HTML5 Canvas rendering eng
 | `mcu-ai-debug.mcpRequireManualRecording` | boolean | `false` | When enabled, automatic recording returns `MANUAL_MODE_REQUIRED` and agents must use the manual recording tool. |
 | `mcu-ai-debug.mcpRecordingMaxDuration` | number | `30` | Maximum recording duration in seconds for automatic mode. |
 | `mcu-ai-debug.mcpManualRecordingMaxDuration` | number | `60` | Maximum recording duration in seconds for manual mode. |
+| `mcu-ai-debug.mcpPreferredPort` | number | `51234` | Preferred localhost port for the MCP server. |
+| `mcu-ai-debug.mcpPortSearchRange` | number | `100` | Number of consecutive ports to try when the preferred MCP port is busy. |
 
 ---
 

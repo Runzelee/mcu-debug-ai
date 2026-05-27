@@ -71,7 +71,15 @@ export class MCUDebugExtension {
         this.liveWatchProvider.setUpdateItemsCallback((items) => this.liveWatchWebview.updateComposite(items));
         this.liveWatchProvider.setGrapher(this.liveWatchGrapher);
         
-        this.liveWatchMcpServer.start();
+        const mcpConfig = vscode.workspace.getConfiguration("mcu-ai-debug", null);
+        const mcpPreferredPort = mcpConfig.get<number>("mcpPreferredPort", 51234);
+        const mcpPortSearchRange = mcpConfig.get<number>("mcpPortSearchRange", 100);
+        try {
+            await this.liveWatchMcpServer.start(mcpPreferredPort, mcpPortSearchRange);
+            await this.refreshWorkspaceMcpPortFile(false);
+        } catch (err: any) {
+            vscode.window.showWarningMessage(`MCU-Debug MCP server did not start: ${err?.message ?? String(err)}`);
+        }
         context.subscriptions.push({ dispose: () => this.liveWatchMcpServer.dispose() });
 
         context.subscriptions.push(vscode.window.registerWebviewViewProvider("mcu-debug.liveWatch", this.liveWatchWebview));
@@ -875,6 +883,49 @@ export class MCUDebugExtension {
         this.liveWatchGrapher.openGraph(() => this.liveWatchProvider.gatherLeafExprs());
     }
 
+    private getMcpPortFilePath(vscodeDir: string): string {
+        return path.join(vscodeDir, "mcu-debug-mcp-port.json");
+    }
+
+    private async refreshWorkspaceMcpPortFile(createDirectory: boolean): Promise<string | null> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            return null;
+        }
+
+        const vscodeDir = path.join(workspaceFolder.uri.fsPath, ".vscode");
+        return this.writeMcpPortFile(vscodeDir, createDirectory);
+    }
+
+    private async writeMcpPortFile(vscodeDir: string, createDirectory: boolean): Promise<string | null> {
+        const port = this.liveWatchMcpServer.getPort();
+        if (!port) {
+            return null;
+        }
+
+        const vscodeDirUri = vscode.Uri.file(vscodeDir);
+        if (createDirectory) {
+            await vscode.workspace.fs.createDirectory(vscodeDirUri);
+        } else {
+            try {
+                await vscode.workspace.fs.stat(vscodeDirUri);
+            } catch (_e) {
+                return null;
+            }
+        }
+
+        const portFilePath = this.getMcpPortFilePath(vscodeDir);
+        const portFile = {
+            host: "127.0.0.1",
+            port,
+            updatedAt: new Date().toISOString(),
+            pid: process.pid,
+            extensionPath: this.context.extensionPath,
+        };
+        await vscode.workspace.fs.writeFile(vscode.Uri.file(portFilePath), Buffer.from(JSON.stringify(portFile, null, 2) + "\n", "utf8"));
+        return portFilePath;
+    }
+
     private async generateMcpConfig() {
         const bridgePath = path.join(this.context.extensionPath, "support", "mcp-bridge.js");
         const nodeCmd = process.execPath; // VS Code's embedded Node.js binary
@@ -890,7 +941,7 @@ export class MCUDebugExtension {
 
         if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
             // Fallback: open as untitled document
-            const fallbackJson = JSON.stringify(this.buildGenericConfig(nodeCmd, bridgePath), null, 2);
+            const fallbackJson = JSON.stringify(this.buildGenericConfig(nodeCmd, bridgePath, { port: this.liveWatchMcpServer.getPort() ?? 51234 }), null, 2);
             const doc = await vscode.workspace.openTextDocument({
                 content: `// Copy this configuration into your AI agent's MCP settings file:\n\n${fallbackJson}`,
                 language: "jsonc"
@@ -904,18 +955,22 @@ export class MCUDebugExtension {
 
         try {
             await vscode.workspace.fs.createDirectory(vscode.Uri.file(vscodeDir));
+            const portFilePath = await this.writeMcpPortFile(vscodeDir, true);
 
             if (choice.id === "vscode") {
                 // VS Code native format: .vscode/mcp.json
                 const vscodeMcpPath = path.join(vscodeDir, "mcp.json");
+                const bridgeArgs = this.buildMcpBridgeArgs(bridgePath, { portFile: portFilePath ?? undefined, port: this.liveWatchMcpServer.getPort() ?? 51234 });
                 const vscodeConfig = {
                     servers: {
                         "mcu-debug": {
                             type: "stdio",
                             command: nodeCmd,
-                            args: [bridgePath],
+                            args: bridgeArgs,
                             env: {
-                                ELECTRON_RUN_AS_NODE: "1"
+                                ELECTRON_RUN_AS_NODE: "1",
+                                MCU_DEBUG_MCP_PORT: String(this.liveWatchMcpServer.getPort() ?? 51234),
+                                ...(portFilePath ? { MCU_DEBUG_MCP_PORT_FILE: portFilePath } : {})
                             }
                         }
                     },
@@ -929,7 +984,7 @@ export class MCUDebugExtension {
             } else {
                 // Generic format: .vscode/mcu-debug-mcp.json
                 const genericPath = path.join(vscodeDir, "mcu-debug-mcp.json");
-                const genericConfig = this.buildGenericConfig(nodeCmd, bridgePath);
+                const genericConfig = this.buildGenericConfig(nodeCmd, bridgePath, { portFile: portFilePath ?? undefined, port: this.liveWatchMcpServer.getPort() ?? 51234 });
                 const content = `// Automatically generated by MCU-Debug\n// Copy this into your AI agent's MCP configuration (e.g. Antigravity, Cursor Settings, Claude Desktop config, etc.)\n// See details in "For humans" section of .vscode/mcp-debug-mcp.md\n\n${JSON.stringify(genericConfig, null, 2)}\n`;
                 await vscode.workspace.fs.writeFile(vscode.Uri.file(genericPath), Buffer.from(content, "utf8"));
                 const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(genericPath));
@@ -946,14 +1001,23 @@ export class MCUDebugExtension {
         }
     }
 
-    private buildGenericConfig(nodeCmd: string, bridgePath: string) {
+    private buildMcpBridgeArgs(bridgePath: string, endpoint: { portFile?: string; port: number }): string[] {
+        if (endpoint.portFile) {
+            return [bridgePath, "--port-file", endpoint.portFile];
+        }
+        return [bridgePath, "--port", String(endpoint.port)];
+    }
+
+    private buildGenericConfig(nodeCmd: string, bridgePath: string, endpoint: { portFile?: string; port: number }) {
         return {
             mcpServers: {
                 "mcu-debug": {
                     command: nodeCmd,
-                    args: [bridgePath],
+                    args: this.buildMcpBridgeArgs(bridgePath, endpoint),
                     env: {
-                        ELECTRON_RUN_AS_NODE: "1"
+                        ELECTRON_RUN_AS_NODE: "1",
+                        MCU_DEBUG_MCP_PORT: String(endpoint.port),
+                        ...(endpoint.portFile ? { MCU_DEBUG_MCP_PORT_FILE: endpoint.portFile } : {})
                     }
                 }
             }
@@ -1076,6 +1140,8 @@ export class MCUDebugExtension {
             '- **Cursor**: Go to Settings > Features > MCP, click "Add New MCP Server", and paste the contents of `.vscode/mcu-debug-mcp.json`.',
             "- **Claude Desktop / Other**: Copy the contents of `.vscode/mcu-debug-mcp.json` into your client's MCP configuration file.",
             "",
+            "The generated MCP configuration points the bridge at `.vscode/mcu-debug-mcp-port.json`. MCU-Debug rewrites this file with the actual localhost port used by the current VS Code window, so multiple VS Code instances can avoid port collisions.",
+            "",
             "## VS Code Settings Reference",
             "",
             "| Setting | Type | Default | Description |",
@@ -1083,6 +1149,8 @@ export class MCUDebugExtension {
             "| `mcu-ai-debug.mcpRequireManualRecording` | boolean | false | If enabled, `record_livewatch_variables` returns `MANUAL_MODE_REQUIRED` and agents must use the manual tool. |",
             "| `mcu-ai-debug.mcpRecordingMaxDuration` | number | 30 | Max recording duration in seconds for automatic mode. |",
             "| `mcu-ai-debug.mcpManualRecordingMaxDuration` | number | 60 | Max recording duration in seconds for manual mode. |",
+            "| `mcu-ai-debug.mcpPreferredPort` | number | 51234 | Preferred localhost port for the MCP server. |",
+            "| `mcu-ai-debug.mcpPortSearchRange` | number | 100 | Number of consecutive ports to try when the preferred MCP port is busy. |",
             "",
         ].join("\n");
         await vscode.workspace.fs.writeFile(vscode.Uri.file(docPath), Buffer.from(docStr, "utf8"));
