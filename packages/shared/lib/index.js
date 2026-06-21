@@ -1,6 +1,711 @@
-"use strict";var M=Object.create;var p=Object.defineProperty;var U=Object.getOwnPropertyDescriptor;var W=Object.getOwnPropertyNames;var K=Object.getPrototypeOf,B=Object.prototype.hasOwnProperty;var J=(e,t)=>{for(var r in t)p(e,r,{get:t[r],enumerable:!0})},O=(e,t,r,o)=>{if(t&&typeof t=="object"||typeof t=="function")for(let n of W(t))!B.call(e,n)&&n!==r&&p(e,n,{get:()=>t[n],enumerable:!(o=U(t,n))||o.enumerable});return e};var h=(e,t,r)=>(r=e!=null?M(K(e)):{},O(t||!e||!e.__esModule?p(r,"default",{value:e,enumerable:!0}):r,e)),q=e=>O(p({},"__esModule",{value:!0}),e);var Z={};J(Z,{Decoder:()=>E,TcpPortScanner:()=>f,ValueHandleRegistry:()=>w,ValueHandleRegistryPrimitive:()=>S,WaitForPort:()=>v,commandExists:()=>V,computeProxyLaunchPolicy:()=>Y,findAvailablePortRange:()=>F,resolveProxyNetworkMode:()=>z});module.exports=q(Z);var m=h(require("fs")),I=h(require("path")),A=h(require("os")),H=h(require("net")),y=h(require("proper-lockfile")),C=require("events"),P=class{constructor(t,r){this.lockPaths=t;this.ports=r}async release(){await Promise.all(this.lockPaths.map(t=>y.unlock(t).catch(()=>{})))}},T=[],f=class e{static LoopbackAddr="127.0.0.1";static AllInterfaces="0.0.0.0";static PortAllocated=new C.EventEmitter;static AvoidPorts=new Set;static EmitAllocated(t){if(t&&t.length){for(let r of t)e.AvoidPorts.add(r);e.PortAllocated.emit("allocated",t)}}static async unlockPortsIfFree(t){for(let r of T)if(r.ports.filter(n=>t.includes(n)).length===r.ports.length)try{await r.release()}catch{}}static async isPortInUse(t,r,o){if(r&&r.has(t))return!0;let n=o&&o.length?o:[e.LoopbackAddr,e.AllInterfaces];for(let s of n)if(await e.checkPortStatus(t,s))return!0;return!1}static checkPortStatus(t,r){return new Promise((o,n)=>{let s=H.createServer(()=>{});s.once("error",i=>{i.code==="EADDRINUSE"?o(!0):n(i)}),s.once("close",()=>{o(!1)}),s.listen(t,r,()=>{s.close()})})}static findFreePorts(t,r={}){return new Promise((o,n)=>{F(t,r.start??3e4,r.consecutive??!1,r.avoid).then(s=>{T.push(s),e.EmitAllocated(s.ports),o(s.ports)}).catch(s=>{n(s)})})}};async function Q(e,t,r=!1,o){let n=[],s=[],i=[];try{for(let a=0;n.length<t;a++){let c=e+a;if(c>65535)throw new Error("Out of ports");let u=I.join(A.tmpdir(),`mcu-debug-port-${c}.lock`);if(await f.isPortInUse(c,o)){if(r)throw new Error(`Port ${c} is already in use`);continue}try{m.existsSync(u)||m.writeFileSync(u,"");let l=await y.lock(u,{stale:3e4});s.push(u),i.push(l),n.push(c)}catch(l){if(r)throw l;continue}}return new P(s,n)}catch{try{await Promise.all(i.map(c=>c().catch(()=>{})))}catch(c){console.error(`Error releasing port locks: ${c.toString()}`)}return null}}async function F(e,t,r,o){for(let n=t??3e4;n<65535;n+=10){let s=await Q(n,e,r,o);if(s)return s}throw new Error(`Could not find ${e} consecutive free ports`)}process.on("exit",async()=>{for(let e of T)try{await e.release()}catch{}});var k=require("fs"),N=require("path"),D=require("process");function V(e){let r=(D.env.PATH||"").split(N.delimiter),o=D.platform==="win32"?[".exe",".cmd",".bat",".sh"]:[""];for(let n of r)for(let s of o){let i=N.join(n,e+s);try{return k.accessSync(i,k.constants.F_OK|k.constants.X_OK),!0}catch{continue}}return!1}var w=class{keyToHandle=new Map;handleToObj=new Map;counter=0;addObject(t){let r=this.getKey(t),o=this.keyToHandle.get(r);return o!==void 0||(o=++this.counter,this.keyToHandle.set(r,o),this.handleToObj.set(o,t)),o}getHandle(t){let r=this.getKey(t);return this.keyToHandle.get(r)}getObject(t){return this.handleToObj.get(t)}getObjectByKey(t){let r=this.getKey(t),o=this.keyToHandle.get(r);if(o!==void 0)return this.handleToObj.get(o)}release(t){let r=this.handleToObj.get(t);if(!r)return!1;let o=this.getKey(r);return this.keyToHandle.delete(o),this.handleToObj.delete(t),!0}getKey(t){return $(t)?t.toValueKey():this.stableStringify(t)}stableStringify(t){return $(t)?t.toValueKey():t===null||typeof t!="object"?JSON.stringify(t):t instanceof Date?JSON.stringify(t.toISOString()):t instanceof RegExp?JSON.stringify(t.toString()):Array.isArray(t)?"["+t.map(n=>this.stableStringify(n)).join(",")+"]":"{"+Object.keys(t).sort().map(n=>JSON.stringify(n)+":"+this.stableStringify(t[n])).join(",")+"}"}clear(){this.keyToHandle.clear(),this.handleToObj.clear(),this.counter=0}};function $(e){return e&&typeof e.toValueKey=="function"}var S=class{keyToHandle=new Map;handleToItem=new Map;counter=0;add(t){let r=this.keyToHandle.get(t);return r!==void 0?r:(this.counter++,this.keyToHandle.set(t,this.counter),this.handleToItem.set(this.counter,t),this.counter)}get(t){return this.handleToItem.get(t)}release(t){let r=this.handleToItem.get(t);return r?(this.keyToHandle.delete(r),this.handleToItem.delete(t),!0):!1}clear(){this.keyToHandle.clear(),this.handleToItem.clear(),this.counter=0}};var b=h(require("net")),G={silent:{setup:()=>{},starting:()=>{},tryConnect:()=>{},connected:()=>{},timeout:()=>{}},verbose:{starting:({host:e,port:t})=>{console.log(`Waiting for ${e}:${t} to become available...`)},setup:e=>{console.log(`Socket created: ${e.remoteAddress}:${e.remotePort}`)},tryConnect:()=>{console.log("Trying to connect...")},connected:e=>{console.log("Connected!")},timeout:()=>{console.log("Timeout reached, giving up.")}}},v=class{constructor(t){this.params=t}IPv6enabled=!0;returnedSocket=!1;createConnectionWithTimeout(t,r,o){let n=null,s={host:this.params.host,port:this.params.port,family:t,autoSelectFamily:!0},i=b.createConnection(s,a=>{if(!a&&n&&(clearTimeout(n),n=null),!this.returnedSocket)return o(a)});return this.params.callbacks.setup?.(i),i.on("error",a=>{n&&(clearTimeout(n),n=null),this.returnedSocket||(i.destroy(),o(a))}),n=setTimeout(()=>{i.destroy();let a=new Error(`Timeout trying to open socket to ${this.params.host}:${this.params.port}, IPv${t}`);a.code="ECONNTIMEOUT",o(a)},r),i}checkHttp(t,r,o,n){let s=`GET ${this.params.path} HTTP/1.1\r
+"use strict";
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// src/index.ts
+var index_exports = {};
+__export(index_exports, {
+  Decoder: () => Decoder,
+  TcpPortScanner: () => TcpPortScanner,
+  ValueHandleRegistry: () => ValueHandleRegistry,
+  ValueHandleRegistryPrimitive: () => ValueHandleRegistryPrimitive,
+  WaitForPort: () => WaitForPort,
+  commandExists: () => commandExists,
+  computeProxyLaunchPolicy: () => computeProxyLaunchPolicy,
+  findAvailablePortRange: () => findAvailablePortRange,
+  resolveProxyNetworkMode: () => resolveProxyNetworkMode
+});
+module.exports = __toCommonJS(index_exports);
+
+// src/find-free-ports.ts
+var fs = __toESM(require("fs"));
+var path = __toESM(require("path"));
+var os = __toESM(require("os"));
+var net = __toESM(require("net"));
+var lockfile = __toESM(require("proper-lockfile"));
+var import_events = require("events");
+var PortRangeLock = class {
+  constructor(lockPaths, ports) {
+    this.lockPaths = lockPaths;
+    this.ports = ports;
+  }
+  async release() {
+    await Promise.all(this.lockPaths.map((p) => lockfile.unlock(p).catch(() => {
+    })));
+  }
+};
+var allLockFiles = [];
+var TcpPortScanner = class _TcpPortScanner {
+  static LoopbackAddr = "127.0.0.1";
+  static AllInterfaces = "0.0.0.0";
+  static PortAllocated = new import_events.EventEmitter();
+  // Anything allocated using findFreePorts() is added into this set. Never cleared but clients can feel free to clear
+  // findFreePorts() will avoid these ports
+  static AvoidPorts = /* @__PURE__ */ new Set();
+  static EmitAllocated(ports) {
+    if (ports && ports.length) {
+      for (const p of ports) {
+        _TcpPortScanner.AvoidPorts.add(p);
+      }
+      _TcpPortScanner.PortAllocated.emit("allocated", ports);
+    }
+  }
+  static async unlockPortsIfFree(ports) {
+    for (const lock2 of allLockFiles) {
+      const intersection = lock2.ports.filter((p) => ports.includes(p));
+      if (intersection.length === lock2.ports.length) {
+        try {
+          await lock2.release();
+        } catch {
+        }
+      }
+    }
+  }
+  /**
+   * Checks to see if the port is in use by creating a server on that port. You should use the function
+   * `isPortInUseEx()` if you want to do a more exhaustive check or a general purpose use for any host
+   *
+   * @param port port to use. Must be > 0 and <= 65535
+   * @param host host ip address(es) to use. This should be an alias to a localhost. (Default: check both 127.0.0.1
+   * and 0.0.0.0 covers all interfaces -- needed for macOS)
+   * @param avoid if port is in this list, it is considered "in use"
+   * @returns Promise that resolves to true if the port is in use, false otherwise
+   */
+  static async isPortInUse(port, avoid, hosts) {
+    if (avoid && avoid.has(port)) {
+      return true;
+    }
+    const hostsToCheck = hosts && hosts.length ? hosts : [_TcpPortScanner.LoopbackAddr, _TcpPortScanner.AllInterfaces];
+    for (const h of hostsToCheck) {
+      const inUse = await _TcpPortScanner.checkPortStatus(port, h);
+      if (inUse) {
+        return true;
+      }
+    }
+    return false;
+  }
+  static checkPortStatus(port, host) {
+    return new Promise((resolve, reject) => {
+      const server = net.createServer(() => {
+      });
+      server.once("error", (err) => {
+        if (err.code === "EADDRINUSE") {
+          resolve(true);
+        } else {
+          reject(err);
+        }
+      });
+      server.once("close", () => {
+        resolve(false);
+      });
+      server.listen(port, host, () => {
+        server.close();
+      });
+    });
+  }
+  /**
+   * Scan for free ports (no one listening) on the specified host.
+   * Don't like the interface but trying to keep compatibility with `portastic.find()`. Unlike
+   * `portastic` the default ports to retrieve is 1 and we also have the option of returning
+   * consecutive ports
+   *
+   * Detail: While this function is async, promises are chained to find open ports recursively
+   *
+   * @param0
+   * @param host Use any string that is a valid host name or ip address
+   * @return a Promise with an array of ports or null when cb is used
+   */
+  static findFreePorts(numPorts, options = {}) {
+    return new Promise((resolve, reject) => {
+      findAvailablePortRange(numPorts, options.start ?? 3e4, options.consecutive ?? false, options.avoid).then((lock2) => {
+        allLockFiles.push(lock2);
+        _TcpPortScanner.EmitAllocated(lock2.ports);
+        resolve(lock2.ports);
+      }).catch((err) => {
+        reject(err);
+      });
+    });
+  }
+};
+async function tryReserveRange(start, count, consecutive = false, avoid) {
+  const ports = [];
+  const lockPaths = [];
+  const releaseLocks = [];
+  try {
+    for (let i = 0; ports.length < count; i++) {
+      const port = start + i;
+      if (port > 65535) {
+        throw new Error("Out of ports");
+      }
+      const lockPath = path.join(os.tmpdir(), `mcu-debug-port-${port}.lock`);
+      const inUse = await TcpPortScanner.isPortInUse(port, avoid);
+      if (inUse) {
+        if (consecutive) {
+          throw new Error(`Port ${port} is already in use`);
+        } else {
+          continue;
+        }
+      }
+      try {
+        if (!fs.existsSync(lockPath)) {
+          fs.writeFileSync(lockPath, "");
+        }
+        const release = await lockfile.lock(lockPath, { stale: 3e4 });
+        lockPaths.push(lockPath);
+        releaseLocks.push(release);
+        ports.push(port);
+      } catch (e) {
+        if (consecutive) {
+          throw e;
+        }
+        continue;
+      }
+    }
+    return new PortRangeLock(lockPaths, ports);
+  } catch (err) {
+    try {
+      await Promise.all(releaseLocks.map((r) => r().catch(() => {
+      })));
+    } catch (e) {
+      console.error(`Error releasing port locks: ${e.toString()}`);
+    }
+    return null;
+  }
+}
+async function findAvailablePortRange(count, preferredStart, consecutive, avoid) {
+  for (let base = preferredStart ?? 3e4; base < 65535; base += 10) {
+    const result = await tryReserveRange(base, count, consecutive, avoid);
+    if (result) return result;
+  }
+  throw new Error(`Could not find ${count} consecutive free ports`);
+}
+process.on("exit", async () => {
+  for (const lock2 of allLockFiles) {
+    try {
+      await lock2.release();
+    } catch {
+    }
+  }
+});
+
+// src/command-exists.ts
+var fs2 = require("fs");
+var path2 = require("path");
+var process2 = require("process");
+function commandExists(commandName) {
+  const envPath = process2.env.PATH || "";
+  const pathDirs = envPath.split(path2.delimiter);
+  const extensions = process2.platform === "win32" ? [".exe", ".cmd", ".bat", ".sh"] : [""];
+  for (const dir of pathDirs) {
+    for (const ext of extensions) {
+      const fullPath = path2.join(dir, commandName + ext);
+      try {
+        fs2.accessSync(fullPath, fs2.constants.F_OK | fs2.constants.X_OK);
+        return true;
+      } catch (err) {
+        continue;
+      }
+    }
+  }
+  return false;
+}
+
+// src/handles.ts
+var ValueHandleRegistry = class {
+  keyToHandle = /* @__PURE__ */ new Map();
+  handleToObj = /* @__PURE__ */ new Map();
+  counter = 0;
+  /**
+   * Get a handle for an object. If the object (by value) has been seen before,
+   * returns the existing handle. Otherwise, creates a new one.
+   */
+  addObject(obj) {
+    const key = this.getKey(obj);
+    let handle = this.keyToHandle.get(key);
+    if (handle !== void 0) {
+      return handle;
+    }
+    handle = ++this.counter;
+    this.keyToHandle.set(key, handle);
+    this.handleToObj.set(handle, obj);
+    return handle;
+  }
+  getHandle(obj) {
+    const key = this.getKey(obj);
+    const handle = this.keyToHandle.get(key);
+    return handle;
+  }
+  getObject(handle) {
+    return this.handleToObj.get(handle);
+  }
+  getObjectByKey(key) {
+    const k = this.getKey(key);
+    const handle = this.keyToHandle.get(k);
+    if (handle !== void 0) {
+      return this.handleToObj.get(handle);
+    }
+    return void 0;
+  }
+  release(handle) {
+    const obj = this.handleToObj.get(handle);
+    if (!obj) return false;
+    const key = this.getKey(obj);
+    this.keyToHandle.delete(key);
+    this.handleToObj.delete(handle);
+    return true;
+  }
+  /**
+   * Determines the unique key for an object using the hybrid strategy.
+   */
+  getKey(obj) {
+    if (isValueIdentifiable(obj)) {
+      return obj.toValueKey();
+    }
+    return this.stableStringify(obj);
+  }
+  /**
+   * Recursively stringifies an object with sorted keys.
+   * Respects IValueIdentifiable during recursion.
+   */
+  stableStringify(val) {
+    if (isValueIdentifiable(val)) {
+      return val.toValueKey();
+    }
+    if (val === null || typeof val !== "object") {
+      return JSON.stringify(val);
+    }
+    if (val instanceof Date) return JSON.stringify(val.toISOString());
+    if (val instanceof RegExp) return JSON.stringify(val.toString());
+    if (Array.isArray(val)) {
+      return "[" + val.map((item) => this.stableStringify(item)).join(",") + "]";
+    }
+    const keys = Object.keys(val).sort();
+    const parts = keys.map((key) => {
+      return JSON.stringify(key) + ":" + this.stableStringify(val[key]);
+    });
+    return "{" + parts.join(",") + "}";
+  }
+  clear() {
+    this.keyToHandle.clear();
+    this.handleToObj.clear();
+    this.counter = 0;
+  }
+};
+function isValueIdentifiable(obj) {
+  return obj && typeof obj.toValueKey === "function";
+}
+var ValueHandleRegistryPrimitive = class {
+  keyToHandle = /* @__PURE__ */ new Map();
+  handleToItem = /* @__PURE__ */ new Map();
+  counter = 0;
+  add(item) {
+    const existing = this.keyToHandle.get(item);
+    if (existing !== void 0) {
+      return existing;
+    }
+    this.counter++;
+    this.keyToHandle.set(item, this.counter);
+    this.handleToItem.set(this.counter, item);
+    return this.counter;
+  }
+  get(handle) {
+    return this.handleToItem.get(handle);
+  }
+  release(handle) {
+    const obj = this.handleToItem.get(handle);
+    if (!obj) return false;
+    this.keyToHandle.delete(obj);
+    this.handleToItem.delete(handle);
+    return true;
+  }
+  clear() {
+    this.keyToHandle.clear();
+    this.handleToItem.clear();
+    this.counter = 0;
+  }
+};
+
+// src/wait-for-port.ts
+var net2 = __toESM(require("net"));
+var DefaultWaitCallbacks = {
+  silent: {
+    setup: () => {
+    },
+    starting: () => {
+    },
+    tryConnect: () => {
+    },
+    connected: () => {
+    },
+    timeout: () => {
+    }
+  },
+  verbose: {
+    starting: ({ host, port }) => {
+      console.log(`Waiting for ${host}:${port} to become available...`);
+    },
+    setup: (socket) => {
+      console.log(`Socket created: ${socket.remoteAddress}:${socket.remotePort}`);
+    },
+    tryConnect: () => {
+      console.log("Trying to connect...");
+    },
+    connected: (socket) => {
+      console.log("Connected!");
+    },
+    timeout: () => {
+      console.log("Timeout reached, giving up.");
+    }
+  }
+};
+var WaitForPort = class {
+  constructor(params) {
+    this.params = params;
+  }
+  IPv6enabled = true;
+  returnedSocket = false;
+  createConnectionWithTimeout(ipVersion, timeout, callback) {
+    let timer = null;
+    const opts = {
+      host: this.params.host,
+      port: this.params.port,
+      family: ipVersion,
+      autoSelectFamily: true
+    };
+    const socket = net2.createConnection(opts, (err) => {
+      if (!err && timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (!this.returnedSocket) {
+        return callback(err);
+      }
+    });
+    this.params.callbacks.setup?.(socket);
+    socket.on("error", (error) => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (!this.returnedSocket) {
+        socket.destroy();
+        callback(error);
+      }
+    });
+    timer = setTimeout(() => {
+      socket.destroy();
+      const error = new Error(`Timeout trying to open socket to ${this.params.host}:${this.params.port}, IPv${ipVersion}`);
+      error.code = "ECONNTIMEOUT";
+      callback(error);
+    }, timeout);
+    return socket;
+  }
+  checkHttp(socket, ipVersion, timeout, callback) {
+    const request = `GET ${this.params.path} HTTP/1.1\r
 Host: ${this.params.host}\r
 \r
-`,i=null;i=setTimeout(()=>{t.destroy();let a=new Error(`Timeout waiting for data from ${this.params.host}:${this.params.port}, IPv${r}`);a.code="EREQTIMEOUT",n(a)},o),t.on("data",function(a){let u=a.toString().split(`
-`)[0];i&&clearTimeout(i);let d=u.split(" ");if(d.length<2||d[1].startsWith("2")===!1){let l=new Error("Invalid response from server");l.code="ERESPONSE",n(l)}n()}),t.write(s)}tryConnect(t,r){return new Promise((o,n)=>{try{let s=this.createConnectionWithTimeout(t,this.params.interval||1e3,i=>{if(i)return i.code==="ECONNREFUSED"||i.code==="EACCES"?(s.destroy(),o([!1])):i.code==="ECONNTIMEOUT"?(s.destroy(),o([!1])):i.code==="ECONNRESET"?(s.destroy(),o([!1])):this.IPv6enabled===!0&&(i.code==="EADDRNOTAVAIL"||i.code==="ENOTFOUND")?(this.IPv6enabled=!1,s.destroy(),o([!1])):i.code==="ENOTFOUND"?(s.destroy(),this.params.waitForDns===!0?o([!1]):n(new Error(`The address '${this.params.host}' cannot be found`))):(s.destroy(),t===6?(this.IPv6enabled=!1,o([!1])):n(i));if(this.params.protocol!=="http")return o([!0,s]);this.checkHttp(s,t,r,a=>a?a.code==="EREQTIMEOUT"?(s.destroy(),o([!1])):a.code==="ERESPONSE"?(s.destroy(),o([!1])):(s.destroy(),n(a)):o([!0,s]))})}catch(s){return n(s)}})}waitPort(){return this.returnedSocket=!1,this.IPv6enabled=!0,new Promise((t,r)=>{X(this.params);let o=this.params.host,n=this.params.port,s=this.params.interval,i=this.params.timeout,a=new Date,c=1e3,u=this.params.callbacks||G.silent;u.starting({host:o,port:n});let d=(l=4)=>{u.tryConnect?.(),this.tryConnect(l,c).then(([g,x])=>{if(g)return this.returnedSocket=!0,u.connected(x),t({open:!0,ipVersion:l,socket:x});let R=new Date().getTime()-a.getTime();return i&&R>i?(u.timeout(),t({open:!1})):this.IPv6enabled&&l===4&&!b.isIP(o)?d(6):setTimeout(d,s)}).catch(g=>r(g))};d()})}};function X(e){e.protocol=e.protocol||"tcp",e.host=e.host||"127.0.0.1",e.port=e.port||80,e.path=e.path||"/",e.interval=e.interval||1e3,e.timeout=e.timeout||0,e.waitForDns=e.waitForDns||!1}var j=h(require("child_process")),L=require("events"),E=class extends L.EventEmitter{spec;process;constructor(t){super(),this.spec=Object.assign({},t),this.spec.cwd=t.cwd||process.cwd(),this.spec.env={...process.env,...t.env||{}}}getProgram(){return this.spec.program}getArgs(){return this.spec.args}getCwd(){return this.spec.cwd}runProgram(t){return new Promise((r,o)=>{let n={cwd:this.getCwd(),env:this.spec.env,detached:!0};t&&(n.stdio=t),this.process=j.spawn(this.getProgram(),this.getArgs(),n),this.process.stdout?.on("data",s=>{this.emit("stdout",s)}),this.process.stderr?.on("data",s=>{this.emit("stderr",s)}),this.process.on("close",s=>{this.emit("close",s)}),this.process.on("error",s=>{this.emit("error",s),o(s)}),this.process.on("spawn",()=>{r()}),this.on("stdin",async s=>{await this.writeStdin(s)})})}setStdinPiped(t){t.pipe(this.process?.stdin)}setStdoutPiped(t){this.process?.stdout?.pipe(t)}setStderrPiped(t){this.process?.stderr?.pipe(t)}async writeStdin(t){this.process&&this.process.stdin&&this.process.stdin.writable&&(this.process.stdin.write(t)||await this.process.stdin.once("drain",()=>{}))}close(){this.process&&(this.process.stdin?.end(),setTimeout(()=>{this.process?.stdout?.destroy(),this.process?.stderr?.destroy(),this.process?.kill(),this.process=void 0},10))}dispose(){this.close(),this.removeAllListeners()}};function z(e="auto",t){return e==="local"?"local":e==="ssh"?"ssh":t?t==="wsl"?"auto-wsl":t==="dev-container"?"auto-dev-container":t==="ssh-remote"?"auto-ssh-remote":`auto-${t}`:"auto-local"}function Y(e){return e==="local"||e==="auto-local"||e==="ssh"||e==="auto-ssh-remote"?{mode:e,bindHost:"127.0.0.1",proxyHostForDA:"127.0.0.1",reason:"Loopback-only mode"}:e==="auto-dev-container"?{mode:e,bindHost:"127.0.0.1",proxyHostForDA:"host.docker.internal",reason:"Container reaches host through host.docker.internal"}:e==="auto-wsl"?{mode:e,bindHost:"0.0.0.0",proxyHostForDA:"<wsl-gateway-ip>",reason:"WSL mode may require host bind outside loopback for NAT"}:{mode:e,bindHost:"127.0.0.1",proxyHostForDA:"127.0.0.1",reason:"Fallback policy"}}0&&(module.exports={Decoder,TcpPortScanner,ValueHandleRegistry,ValueHandleRegistryPrimitive,WaitForPort,commandExists,computeProxyLaunchPolicy,findAvailablePortRange,resolveProxyNetworkMode});
+`;
+    let timer = null;
+    timer = setTimeout(() => {
+      socket.destroy();
+      const error = new Error(`Timeout waiting for data from ${this.params.host}:${this.params.port}, IPv${ipVersion}`);
+      error.code = "EREQTIMEOUT";
+      callback(error);
+    }, timeout);
+    socket.on("data", function(data) {
+      const response = data.toString();
+      const statusLine = response.split("\n")[0];
+      if (timer) clearTimeout(timer);
+      const statusLineParts = statusLine.split(" ");
+      if (statusLineParts.length < 2 || statusLineParts[1].startsWith("2") === false) {
+        const error = new Error("Invalid response from server");
+        error.code = "ERESPONSE";
+        callback(error);
+      }
+      callback();
+    });
+    socket.write(request);
+  }
+  //  This function attempts to open a connection, given a limited time window.
+  //  This is the function which we will run repeatedly until we connect.
+  tryConnect(ipVersion, timeout) {
+    return new Promise((resolve, reject) => {
+      try {
+        const socket = this.createConnectionWithTimeout(ipVersion, this.params.interval || 1e3, (err) => {
+          if (err) {
+            if (err.code === "ECONNREFUSED" || err.code === "EACCES") {
+              socket.destroy();
+              return resolve([false]);
+            } else if (err.code === "ECONNTIMEOUT") {
+              socket.destroy();
+              return resolve([false]);
+            } else if (err.code === "ECONNRESET") {
+              socket.destroy();
+              return resolve([false]);
+            } else if (this.IPv6enabled === true && (err.code === "EADDRNOTAVAIL" || err.code === "ENOTFOUND")) {
+              this.IPv6enabled = false;
+              socket.destroy();
+              return resolve([false]);
+            } else if (err.code === "ENOTFOUND") {
+              socket.destroy();
+              if (this.params.waitForDns === true) return resolve([false]);
+              return reject(new Error(`The address '${this.params.host}' cannot be found`));
+            }
+            socket.destroy();
+            if (ipVersion === 6) {
+              this.IPv6enabled = false;
+              return resolve([false]);
+            }
+            return reject(err);
+          }
+          if (this.params.protocol !== "http") {
+            return resolve([true, socket]);
+          }
+          this.checkHttp(socket, ipVersion, timeout, (err2) => {
+            if (err2) {
+              if (err2.code === "EREQTIMEOUT") {
+                socket.destroy();
+                return resolve([false]);
+              } else if (err2.code === "ERESPONSE") {
+                socket.destroy();
+                return resolve([false]);
+              }
+              socket.destroy();
+              return reject(err2);
+            }
+            return resolve([true, socket]);
+          });
+        });
+      } catch (err) {
+        return reject(err);
+      }
+    });
+  }
+  waitPort() {
+    this.returnedSocket = false;
+    this.IPv6enabled = true;
+    return new Promise((resolve, reject) => {
+      validateParameters(this.params);
+      const host = this.params.host;
+      const port = this.params.port;
+      const interval = this.params.interval;
+      const timeout = this.params.timeout;
+      const startTime = /* @__PURE__ */ new Date();
+      const connectTimeout = 1e3;
+      const outputFunction = this.params.callbacks || DefaultWaitCallbacks.silent;
+      outputFunction.starting({ host, port });
+      const loop = (ipVersion = 4) => {
+        outputFunction.tryConnect?.();
+        this.tryConnect(ipVersion, connectTimeout).then(([open, socket]) => {
+          if (open) {
+            this.returnedSocket = true;
+            outputFunction.connected(socket);
+            return resolve({ open: true, ipVersion, socket });
+          }
+          const now = /* @__PURE__ */ new Date();
+          const delta = now.getTime() - startTime.getTime();
+          if (timeout && delta > timeout) {
+            outputFunction.timeout();
+            return resolve({ open: false });
+          }
+          if (this.IPv6enabled && ipVersion === 4 && !net2.isIP(host)) {
+            return loop(6);
+          }
+          return setTimeout(loop, interval);
+        }).catch((err) => {
+          return reject(err);
+        });
+      };
+      loop();
+    });
+  }
+};
+function validateParameters(params) {
+  params.protocol = params.protocol || "tcp";
+  params.host = params.host || "127.0.0.1";
+  params.port = params.port || 80;
+  params.path = params.path || "/";
+  params.interval = params.interval || 1e3;
+  params.timeout = params.timeout || 0;
+  params.waitForDns = params.waitForDns || false;
+}
+
+// src/run-decoder.ts
+var child_process = __toESM(require("child_process"));
+var import_events2 = require("events");
+var Decoder = class extends import_events2.EventEmitter {
+  spec;
+  process;
+  constructor(spec) {
+    super();
+    this.spec = Object.assign({}, spec);
+    this.spec.cwd = spec.cwd || process.cwd();
+    this.spec.env = { ...process.env, ...spec.env || {} };
+  }
+  getProgram() {
+    return this.spec.program;
+  }
+  getArgs() {
+    return this.spec.args;
+  }
+  getCwd() {
+    return this.spec.cwd;
+  }
+  runProgram(stdio) {
+    return new Promise((resolve, reject) => {
+      const obj = {
+        cwd: this.getCwd(),
+        env: this.spec.env,
+        detached: true
+      };
+      if (stdio) {
+        obj.stdio = stdio;
+      }
+      this.process = child_process.spawn(this.getProgram(), this.getArgs(), obj);
+      this.process.stdout?.on("data", (data) => {
+        this.emit("stdout", data);
+      });
+      this.process.stderr?.on("data", (data) => {
+        this.emit("stderr", data);
+      });
+      this.process.on("close", (code) => {
+        this.emit("close", code);
+      });
+      this.process.on("error", (err) => {
+        this.emit("error", err);
+        reject(err);
+      });
+      this.process.on("spawn", () => {
+        resolve();
+      });
+      this.on("stdin", async (data) => {
+        await this.writeStdin(data);
+      });
+    });
+  }
+  setStdinPiped(stream) {
+    stream.pipe(this.process?.stdin);
+  }
+  setStdoutPiped(stream) {
+    this.process?.stdout?.pipe(stream);
+  }
+  setStderrPiped(stream) {
+    this.process?.stderr?.pipe(stream);
+  }
+  async writeStdin(data) {
+    if (this.process && this.process.stdin && this.process.stdin.writable) {
+      if (!this.process.stdin.write(data)) {
+        await this.process.stdin.once("drain", () => {
+        });
+      }
+    }
+  }
+  close() {
+    if (this.process) {
+      this.process.stdin?.end();
+      setTimeout(() => {
+        this.process?.stdout?.destroy();
+        this.process?.stderr?.destroy();
+        this.process?.kill();
+        this.process = void 0;
+      }, 10);
+    }
+  }
+  dispose() {
+    this.close();
+    this.removeAllListeners();
+  }
+};
+
+// src/proxy-network.ts
+function resolveProxyNetworkMode(hostType = "auto", remoteName) {
+  if (hostType === "local") {
+    return "local";
+  }
+  if (hostType === "ssh") {
+    return "ssh";
+  }
+  if (!remoteName) {
+    return "auto-local";
+  }
+  if (remoteName === "wsl") {
+    return "auto-wsl";
+  }
+  if (remoteName === "dev-container") {
+    return "auto-dev-container";
+  }
+  if (remoteName === "ssh-remote") {
+    return "auto-ssh-remote";
+  }
+  return `auto-${remoteName}`;
+}
+function computeProxyLaunchPolicy(mode) {
+  if (mode === "local" || mode === "auto-local" || mode === "ssh" || mode === "auto-ssh-remote") {
+    return {
+      mode,
+      bindHost: "127.0.0.1",
+      proxyHostForDA: "127.0.0.1",
+      reason: "Loopback-only mode"
+    };
+  }
+  if (mode === "auto-dev-container") {
+    return {
+      mode,
+      bindHost: "127.0.0.1",
+      proxyHostForDA: "host.docker.internal",
+      reason: "Container reaches host through host.docker.internal"
+    };
+  }
+  if (mode === "auto-wsl") {
+    return {
+      mode,
+      bindHost: "0.0.0.0",
+      proxyHostForDA: "<wsl-gateway-ip>",
+      reason: "WSL mode may require host bind outside loopback for NAT"
+    };
+  }
+  return {
+    mode,
+    bindHost: "127.0.0.1",
+    proxyHostForDA: "127.0.0.1",
+    reason: "Fallback policy"
+  };
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  Decoder,
+  TcpPortScanner,
+  ValueHandleRegistry,
+  ValueHandleRegistryPrimitive,
+  WaitForPort,
+  commandExists,
+  computeProxyLaunchPolicy,
+  findAvailablePortRange,
+  resolveProxyNetworkMode
+});
 //# sourceMappingURL=index.js.map

@@ -60,7 +60,7 @@ export class LiveWatchMonitor {
         this.debugFlags = { ...this.mainSession.args.debugFlags };
         this.debugFlags.gdbTraces = this.debugFlags.liveGdbTraces;
         this.debugFlags.gdbTracesParsed = this.debugFlags.liveGdbTracesParsed;
-        this.gdbInstance.debugFlags = this.debugFlags;
+        this.gdbInstance.debugFlags = this.debugFlags ?? this.gdbInstance.debugFlags ?? {};
         const exe = this.mainSession.gdbInstance.gdbPath;
         const args = this.mainSession.gdbInstance.gdbArgs;
         gdbCommands.push('interpreter-exec console "set stack-cache off"');
@@ -86,9 +86,9 @@ export class LiveWatchMonitor {
             });
     }
 
-    public stop(): void {
+    public async stop(): Promise<void> {
         this.stopTimer();
-        this.quit().catch(() => {});
+        await this.quit().catch(() => {});
     }
 
     public enabled(): boolean {
@@ -519,21 +519,26 @@ export class LiveWatchMonitor {
     }
 
     private quitting = false;
-    public async quit() {
+    private async quit() {
         try {
             if (!this.quitting && this.gdbInstance.IsGdbRunning()) {
                 this.quitting = true;
                 try {
-                    // Give GDB a chance to detach nicely, but don't wait forever
-                    await this.gdbInstance.sendCommand("-target-detach", 100);
+                    // Disconnect without detaching: detach implicitly resumes a halted target.
+                    await this.gdbInstance.sendCommand("-target-disconnect", 100);
                 } catch (e) {
+                    if (this.debugFlags.anyFlags) {
+                        this.handleMsg(Stderr, `Error during Live GDB disconnect: ${e}\n`);
+                    }
                     // Ignore errors
                 } finally {
                     await this.gdbInstance.sendCommand("-gdb-exit", 100);
                 }
             }
         } catch (e: any) {
-            console.error("LiveWatchMonitor.quit", e);
+            if (this.debugFlags.anyFlags) {
+                this.handleMsg(Stderr, `LiveWatchMonitor.quit: ${e}\n`);
+            }
         }
     }
 }

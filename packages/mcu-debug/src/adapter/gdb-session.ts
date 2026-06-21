@@ -153,12 +153,11 @@ export class GDBDebugSession extends SeqDebugSession {
         // current session and starting a new one from scratch. But, we still have to support the launch.json
         // properties related to Restart but for Reset. This way, we don't break functionality.
         response.body.supportsRestartRequest = false;
-        response.body.supportsTerminateRequest = true;
+        response.body.supportSuspendDebuggee = true;
+        response.body.supportTerminateDebuggee = true;
 
         response.body.supportsGotoTargetsRequest = true;
-        response.body.supportSuspendDebuggee = true;
         response.body.supportsValueFormattingOptions = true;
-        // response.body.supportTerminateDebuggee = true;
         response.body.supportsDataBreakpoints = true;
         response.body.supportsDisassembleRequest = true;
         // response.body.supportsSteppingGranularity = true;
@@ -198,19 +197,26 @@ export class GDBDebugSession extends SeqDebugSession {
             }, 100);
 
             this.endSession = true;
+            const doTerminate = !!args.terminateDebuggee;
+            const doContinue = !doTerminate && !args.suspendDebuggee;
             this.debugHelper.dispose();
             this.rttManager.dispose();
-            this.liveWatchMonitor.stop();
-            const doTerminate = !!args.terminateDebuggee;
-            this.handleMsg(Stdout, `Ending debug session...${JSON.stringify(args)}\n`);
+            this.suppressStoppedEvents = true;
+            if (this.liveWatchMonitor.enabled()) {
+                await this.liveWatchMonitor.stop();
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            if (this.args.debugFlags.anyFlags) {
+                this.handleMsg(Stdout, `Client requested end of debug session: ${JSON.stringify(args)}\n`);
+            }
             if (this.gdbInstance) {
-                this.suppressStoppedEvents = true;
                 if (this.isRunning()) {
                     try {
+                        // GDB must halt the target before deleting breakpoints or running end commands.
                         await this.gdbInstance.sendCommand("-exec-interrupt", 100);
                         await this.waitForCompletion(5, () => !this.isRunning(), 5);
                         if (this.isRunning()) {
-                            this.handleMsg(Stderr, "Target is still running during disconnect. Trying to halt it again...\n");
+                            this.handleMsg(Stderr, "Target is still running after an interrupt; continuing session cleanup.\n");
                         }
                     } catch (e) {
                         // Ignore errors
@@ -233,13 +239,12 @@ export class GDBDebugSession extends SeqDebugSession {
                     await new Promise((resolve) => setTimeout(resolve, 50));
                 }
 
-                if (!doTerminate && !this.isRunning()) {
+                if (doContinue) {
                     try {
-                        // Try to exit GDB nicely
                         await this.gdbInstance.sendCommand("-exec-continue", 200);
                         await this.waitForCompletion(5, () => this.isRunning(), 5);
                         if (!this.isRunning()) {
-                            this.handleMsg(Stderr, "Target is not running depite issuing a continue command again...\n");
+                            this.handleMsg(Stderr, "Target is not running despite issuing a continue command.\n");
                         }
                     } catch (e) {
                         this.handleMsg(Stderr, "Error continuing target before exit: " + (e ? e.toString() : "Unknown error") + "\n");
@@ -248,7 +253,11 @@ export class GDBDebugSession extends SeqDebugSession {
 
                 try {
                     // Give GDB a chance to detach nicely, but don't wait forever
-                    await this.gdbInstance.sendCommand("-target-disconnect", 250);
+                    if (doContinue) {
+                        await this.gdbInstance.sendCommand("-target-detach", 250);
+                    } else {
+                        await this.gdbInstance.sendCommand("-target-disconnect", 250);
+                    }
                 } catch (e) {
                     // Ignore errors
                 }
@@ -1373,7 +1382,7 @@ export class GDBDebugSession extends SeqDebugSession {
     private async startGdb(): Promise<void> {
         const gdbPath = this.getGdbPath();
         const gdbArgs = ["-q", "--interpreter=mi3", ...(this.args.debuggerArgs || [])];
-        this.gdbInstance.debugFlags = this.args.debugFlags;
+        this.gdbInstance.debugFlags = this.args.debugFlags ?? this.gdbInstance.debugFlags ?? {};
         this.handleMsg(GdbEventNames.Console, `mcu-debug: Starting GDB: ${gdbPath} ${gdbArgs.join(" ")}\n`);
         this.subscribeToGdbEvents();
         await this.gdbInstance.start(gdbPath, gdbArgs, this.args.cwd, this.getGdbStartCommands());
@@ -1446,15 +1455,20 @@ export class GDBDebugSession extends SeqDebugSession {
         return cmds;
     }
     protected getConnectCommands(): string[] {
-        const commands = this.getServerConnectCommands();
-
+        const commands: string[] = [];
         if (this.args.pvtSessionMode === SessionMode.Attach) {
             commands.push(...(this.args.preAttachCommands?.map(COMMAND_MAP) ?? []));
+        } else {
+            commands.push(...(this.args.preLaunchCommands?.map(COMMAND_MAP) ?? []));
+        }
+
+        commands.push(...this.getServerConnectCommands());
+
+        if (this.args.pvtSessionMode === SessionMode.Attach) {
             const attachCommands = this.args.overrideAttachCommands != null ? this.args.overrideAttachCommands.map(COMMAND_MAP) : this.serverSession.serverController.attachCommands();
             commands.push(...attachCommands);
             commands.push(...(this.args.postAttachCommands?.map(COMMAND_MAP) ?? []));
         } else {
-            commands.push(...(this.args.preLaunchCommands?.map(COMMAND_MAP) ?? []));
             const launchCommands = this.args.overrideLaunchCommands != null ? this.args.overrideLaunchCommands.map(COMMAND_MAP) : this.serverSession.serverController.launchCommands();
             commands.push(...launchCommands);
             commands.push(...(this.args.postLaunchCommands?.map(COMMAND_MAP) ?? []));
@@ -1542,14 +1556,14 @@ export class GDBDebugSession extends SeqDebugSession {
         }
         this.suppressStoppedEvents = false;
 
+        if (needsDelay) {
+            await new Promise((resolve) => setTimeout(resolve, 100)); // Allow GDB to finish processing custom commands.
+        }
         if (needsContinue) {
             this.sendContinueWhenPossible().catch((e) => {
                 this.handleMsg(Stderr, `mcu-debug: Failed to continue after session mode commands: ${e instanceof Error ? e.message : String(e)}\n`);
             });
             return;
-        }
-        if (needsDelay) {
-            await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay to allow GDB to process commands
         }
         try {
             await this.gdbMiCommands.sendFlushRegs();

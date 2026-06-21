@@ -62,6 +62,47 @@ export class GdbInstance extends EventEmitter {
         this.processCommandQueue();
     }
 
+    private startupTimer: NodeJS.Timeout | undefined;
+
+    private clearStartupTimer(): void {
+        if (this.startupTimer) {
+            clearInterval(this.startupTimer);
+            this.startupTimer = undefined;
+        }
+    }
+
+    private setupStartupTimer(gdbPath: string, reject: (reason?: any) => void): void {
+        const maxSeconds = 60;
+        const start = Date.now();
+        let lastMessage = start;
+
+        this.startupTimer = setInterval(() => {
+            const now = Date.now();
+            if (now - lastMessage >= 5000) {
+                ServerConsoleLog(`Waiting for GDB process to start... (${Math.floor((now - start) / 1000)}s)`);
+                lastMessage = now;
+            }
+            if (now - start < maxSeconds * 1000) {
+                return;
+            }
+
+            const process = this.process;
+            this.process = null;
+            try {
+                process?.kill();
+            } catch {
+                // The timeout error below is the useful failure to report.
+            }
+            this.clearStartupTimer();
+            reject(
+                new Error(
+                    `GDB process failed to start within ${maxSeconds} seconds. Check '${gdbPath} --version' in a terminal. ` +
+                        "If GDB starts very slowly, check antivirus software or use a faster GDB build.",
+                ),
+            );
+        }, 250);
+    }
+
     start(gdbPath: string, gdbArgs: string[], cwd: string | undefined, init: string[], timeout: number = 250, checkVers = true): Promise<void> {
         this.gdbPath = gdbPath;
         this.gdbArgs = gdbArgs;
@@ -75,6 +116,10 @@ export class GdbInstance extends EventEmitter {
                     }
                 }
             };
+
+            if (checkVers) {
+                this.setupStartupTimer(gdbPath, reject);
+            }
 
             ServerConsoleLog(`Starting GDB: ${gdbPath} ${gdbArgs.join(" ")}, cwd=${cwd}`);
             const child = spawn(gdbPath, gdbArgs, { cwd: cwd, env: process.env });
@@ -90,7 +135,17 @@ export class GdbInstance extends EventEmitter {
 
             if (checkVers) {
                 try {
-                    const major = await this.miCommands.sendDataEvaluateExpression<string>("$_gdb_major");
+                    // The overall startup timer handles this first probe, allowing unusually slow GDB builds to start.
+                    const disableGdbTimeouts = this.debugFlags.disableGdbTimeouts;
+                    let majorPromise: Promise<string>;
+                    try {
+                        this.debugFlags.disableGdbTimeouts = true;
+                        majorPromise = this.miCommands.sendDataEvaluateExpression<string>("$_gdb_major");
+                    } finally {
+                        this.debugFlags.disableGdbTimeouts = disableGdbTimeouts;
+                    }
+                    const major = await majorPromise;
+                    this.clearStartupTimer();
                     const minor = await this.miCommands.sendDataEvaluateExpression<string>("$_gdb_minor");
                     this.gdbMajorVersion = parseInt(major);
                     this.gdbMinorVersion = parseInt(minor);
@@ -106,6 +161,7 @@ export class GdbInstance extends EventEmitter {
                     }
                     return;
                 } catch (e) {
+                    this.clearStartupTimer();
                     // these convenience variables don't exist in older GDB versions
                     ServerConsoleLog("Failed to get GDB version using $_gdb_major/minor variables");
                     reject(new Error("Failed to get GDB version using $_gdb_major/minor variables. GDB version 9.1 or higher is required."));
