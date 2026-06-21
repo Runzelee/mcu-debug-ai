@@ -383,6 +383,9 @@ export class MCUDebugExtension {
             case "custom-event-post-start-gdb":
                 this.startChainedConfigs(e, ChainedEvents.POSTINIT);
                 this.liveWatchProvider?.debugSessionStarted(session);
+                if (!session.parentSession) {
+                    void vscode.commands.executeCommand("mcu-debug.liveWatch.focus");
+                }
                 break;
             case "custom-event-session-terminating":
                 ServerConsoleLog(`Got event for sessions terminating PID=${process.pid}`);

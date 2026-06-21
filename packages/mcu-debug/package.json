@@ -3659,13 +3659,22 @@
         }
       ]
     },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mcu-ai-debug",
+          "title": "MCU AI Debug",
+          "icon": "$(pulse)"
+        }
+      ]
+    },
     "views": {
-      "debug": [
+      "mcu-ai-debug": [
         {
           "type": "webview",
           "id": "mcu-debug.liveWatch",
-          "name": "MCU Debug Live Watch",
-          "icon": "images/live-view.png",
+          "name": "Live Watch",
+          "icon": "$(pulse)",
           "contextualTitle": "Live Watch",
           "when": "debugType == mcu-debug"
         }
