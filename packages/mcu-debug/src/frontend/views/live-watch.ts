@@ -42,6 +42,12 @@ interface GdbMapUpdater {
 }
 
 type NodeFormat = "natural" | "hex" | "decimal" | "binary" | "octal";
+type LiveWatchSelectionKind = "leaf" | "group";
+
+interface LiveWatchSelectionItem extends vscode.QuickPickItem {
+    node: LiveVariableNode;
+    selectionKind: LiveWatchSelectionKind;
+}
 
 export class LiveVariableNode {
     public parent: LiveVariableNode | undefined;
@@ -841,23 +847,14 @@ export class LiveWatchTreeProvider implements TreeViewProviderDelegate, GdbMapUp
         const logger = LiveWatchLogger.getInstance();
         if (logger.isRecording) return;
 
-        const items = this.gatherLeafExprs();
-
-        if (items.length === 0) {
-            vscode.window.showInformationMessage("No valid variables to record. Add variables to Live Watch and expand structs first.");
+        const selectedLeafExprs = await this.pickLeafExprsForLocalCapture("record");
+        if (selectedLeafExprs.length === 0) {
             return;
         }
 
-        const selected = await vscode.window.showQuickPick(items, {
-            canPickMany: true,
-            placeHolder: "Select variables to record..."
-        });
-
-        if (selected && selected.length > 0) {
-            const initialValues = this.gatherSnapshotData(selected);
-            await logger.startRecording(selected, initialValues);
-            this.refresh();
-        }
+        const initialValues = this.gatherSnapshotData(selectedLeafExprs);
+        await logger.startRecording(selectedLeafExprs, initialValues);
+        this.refresh();
     }
 
     public async saveSnapshot() {
@@ -866,20 +863,12 @@ export class LiveWatchTreeProvider implements TreeViewProviderDelegate, GdbMapUp
             return;
         }
 
-        const items = this.gatherLeafExprs();
-        if (items.length === 0) {
-            vscode.window.showInformationMessage("No valid variables to snapshot. Add variables to Live Watch and expand structs first.");
+        const selectedLeafExprs = await this.pickLeafExprsForLocalCapture("snapshot");
+        if (selectedLeafExprs.length === 0) {
             return;
         }
 
-        const selected = await vscode.window.showQuickPick(items, {
-            canPickMany: true,
-            placeHolder: "Select variables to snapshot..."
-        });
-
-        if (selected && selected.length > 0) {
-            await LiveWatchLogger.getInstance().saveSnapshot(this.gatherSnapshotData(selected));
-        }
+        await LiveWatchLogger.getInstance().saveSnapshot(this.gatherSnapshotData(selectedLeafExprs));
     }
 
     public stopRecording() {
@@ -930,6 +919,136 @@ export class LiveWatchTreeProvider implements TreeViewProviderDelegate, GdbMapUp
         }
 
         return snapshot;
+    }
+
+    private async pickLeafExprsForLocalCapture(action: "record" | "snapshot"): Promise<string[]> {
+        const items = this.gatherLocalCaptureItems();
+        if (items.length === 0) {
+            vscode.window.showInformationMessage(`No valid variables to ${action}. Add variables to Live Watch first.`);
+            return [];
+        }
+
+        const selected = await vscode.window.showQuickPick(items, {
+            canPickMany: true,
+            matchOnDescription: true,
+            matchOnDetail: true,
+            placeHolder: `Select variables or structs to ${action}...`,
+        });
+
+        if (!selected || selected.length === 0) {
+            return [];
+        }
+
+        const selectedLeafExprs = await this.resolveLocalCaptureSelection(selected);
+        if (selectedLeafExprs.length === 0) {
+            vscode.window.showInformationMessage(`No leaf variables found for the selected ${action} items.`);
+        }
+        return selectedLeafExprs;
+    }
+
+    private gatherLocalCaptureItems(): LiveWatchSelectionItem[] {
+        const items: LiveWatchSelectionItem[] = [];
+
+        const visit = (node: LiveVariableNode) => {
+            if (node === this.rootNode || node.isDummyNode()) {
+                for (const child of node.getChildren()) {
+                    visit(child);
+                }
+                return;
+            }
+
+            const expr = node.getExpr();
+            if (!expr) {
+                return;
+            }
+
+            const children = node.getChildren().filter((child) => !child.isDummyNode());
+            const isGroup = node.isComposite() || children.length > 0;
+            if (isGroup) {
+                const loadedLeafCount = this.gatherLeafNodesUnder(node).length;
+                items.push({
+                    label: `$(symbol-structure) ${expr}`,
+                    description: loadedLeafCount > 0 ? `${loadedLeafCount} loaded leaves` : "include all leaves",
+                    detail: node.getValue() ? node.getDisplayValue() : "Struct/array",
+                    node,
+                    selectionKind: "group",
+                    alwaysShow: true,
+                });
+            } else {
+                items.push({
+                    label: expr,
+                    description: node.getDisplayValue(),
+                    node,
+                    selectionKind: "leaf",
+                });
+            }
+
+            for (const child of children) {
+                visit(child);
+            }
+        };
+
+        visit(this.rootNode);
+        return items;
+    }
+
+    private async resolveLocalCaptureSelection(selected: readonly LiveWatchSelectionItem[]): Promise<string[]> {
+        const leafExprs: string[] = [];
+        const seen = new Set<string>();
+
+        const addLeaf = (node: LiveVariableNode) => {
+            const expr = node.getExpr();
+            if (expr && !seen.has(expr)) {
+                seen.add(expr);
+                leafExprs.push(expr);
+            }
+        };
+
+        for (const item of selected) {
+            if (item.selectionKind === "leaf") {
+                addLeaf(item.node);
+                continue;
+            }
+
+            await this.expandAllChildren(item.node);
+            for (const leaf of this.gatherLeafNodesUnder(item.node)) {
+                addLeaf(leaf);
+            }
+        }
+
+        this.saveState();
+        this.fire();
+        return leafExprs;
+    }
+
+    private async expandAllChildren(node: LiveVariableNode): Promise<void> {
+        if (node.isComposite()) {
+            await node.expandChildren();
+        }
+
+        for (const child of node.getChildren()) {
+            if (child.isDummyNode()) {
+                continue;
+            }
+            if (child.isComposite()) {
+                await this.expandAllChildren(child);
+            }
+        }
+    }
+
+    private gatherLeafNodesUnder(node: LiveVariableNode): LiveVariableNode[] {
+        let leaves: LiveVariableNode[] = [];
+        const children = node.getChildren().filter((child) => !child.isDummyNode());
+        const isGroup = node.isComposite() || children.length > 0;
+
+        if (node !== this.rootNode && !isGroup) {
+            return [node];
+        }
+
+        for (const child of children) {
+            leaves = leaves.concat(this.gatherLeafNodesUnder(child));
+        }
+        return leaves;
     }
 
     // --- End WebView Delegate ---
