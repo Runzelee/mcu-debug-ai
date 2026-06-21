@@ -23,7 +23,7 @@ export class LiveWatchMcpServer {
     private createMcpServer(): Server {
         const mcpServer = new Server({
             name: "mcu-debug",
-            version: "0.1.2"
+            version: "0.1.3"
         }, {
             capabilities: {
                 tools: {}
